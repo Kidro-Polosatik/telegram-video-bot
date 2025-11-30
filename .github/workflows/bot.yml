@@ -1,0 +1,36 @@
+name: Telegram Video Bot
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:  # Позволяет запускать вручную
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+    
+    - name: 🐍 Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    
+    - name: 📦 Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: 🚀 Run Telegram Bot
+      env:
+        BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+      run: |
+        echo "🤖 Запуск бота..."
+        # Запускаем бота в фоне
+        nohup python bot.py > bot.log 2>&1 &
+        sleep 10
+        echo "✅ Бот запущен!"
+        # Держим workflow активным
+        tail -f bot.log
