@@ -155,9 +155,10 @@ class VideoBot:
                 )
 
                 # Круглая маска
-                def apply_circle_mask(frame):
+                def apply_circle_mask(get_frame, t):
+                    frame = get_frame(t)
                     mask = np.zeros((size, size, 3), dtype=np.uint8)
-                    cv2.circle(mask, (size // 2, size // 2), size // 2, (255, 255, 255), -1)
+                    cv2.circle(mask, (size//2, size//2), size//2, (255, 255, 255), -1)
                     return cv2.bitwise_and(frame, mask)
 
                 logger.info("🎭 Применяю круглую маску...")
