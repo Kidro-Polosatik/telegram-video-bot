@@ -174,28 +174,32 @@ class VideoBot:
         user = update.message.from_user
         logger.info(f"📹 Получено видео от {user.first_name}")
 
-        # Проверяем размер файла
-        if update.message.video.file_size > 50 * 1024 * 1024:  # 50 МБ
-            await update.message.reply_text(
-                "❌ Файл слишком большой! Максимум 50 МБ\n"
-                "📏 Попробуйте:\n"
-                "• Сжать видео\n"
-                "• Выбрать короче\n"
-                "• Уменьшить качество"
-            )
-            return
-
-        # Проверяем длительность
-        video_duration = update.message.video.duration
-        if video_duration > 60:  # 60 секунд
-            await update.message.reply_text(
-                f"⚠️ Видео длинное: {video_duration} секунд\n"
-                "⏰ Бот обрежет до 20 секунд"
-            )
-
-        processing_msg = await update.message.reply_text("🔄 Проверяю видео...")
+        # Инициализируем переменные для временных файлов
+        input_path = None
+        output_path = None
 
         try:
+            # Проверяем размер файла
+            if update.message.video.file_size > 50 * 1024 * 1024:  # 50 МБ
+                await update.message.reply_text(
+                    "❌ Файл слишком большой! Максимум 50 МБ\n"
+                    "📏 Попробуйте:\n"
+                    "• Сжать видео\n"
+                    "• Выбрать короче\n"
+                    "• Уменьшить качество"
+                )
+                return
+
+            # Проверяем длительность
+            video_duration = update.message.video.duration
+            if video_duration > 60:  # 60 секунд
+                await update.message.reply_text(
+                    f"⚠️ Видео длинное: {video_duration} секунд\n"
+                    "⏰ Бот обрежет до 20 секунд"
+                )
+
+            processing_msg = await update.message.reply_text("🔄 Проверяю видео...")
+
             # Скачиваем видео
             video_file = await update.message.video.get_file()
             file_extension = video_file.file_path.split('.')[-1].lower() if video_file.file_path else 'mp4'
@@ -253,25 +257,26 @@ class VideoBot:
 
         except Exception as e:
             logger.error(f"❌ Ошибка в handle_video: {e}")
-            await processing_msg.edit_text(
-                "❌ Ошибка обработки формата\n\n"
-                "📋 **Поддерживаемые форматы:**\n"
-                "• MP4, MOV, AVI, MKV\n"
-                "• WEBM, WMV, MPEG\n"
-                "• До 50 МБ, до 60 секунд\n\n"
-                "💡 **Решение:**\n"
-                "• Используйте MP4 формат\n"
-                "• Уменьшите длительность\n"
-                "• Попробуйте другое видео"
-            )
+            if update.message:
+                await update.message.reply_text(
+                    "❌ Ошибка обработки формата\n\n"
+                    "📋 **Поддерживаемые форматы:**\n"
+                    "• MP4, MOV, AVI, MKV\n"
+                    "• WEBM, WMV, MPEG\n"
+                    "• До 50 МБ, до 60 секунд\n\n"
+                    "💡 **Решение:**\n"
+                    "• Используйте MP4 формат\n"
+                    "• Уменьшите длительность\n"
+                    "• Попробуйте другое видео"
+                )
 
         finally:
             # Очистка временных файлов
             for path in [input_path, output_path]:
                 try:
-                    if os.path.exists(path):
+                    if path and os.path.exists(path):
                         os.unlink(path)
-                        logger.info("✅ Временные файлы удалены")
+                        logger.info(f"✅ Временный файл удален: {path}")
                 except Exception as e:
                     logger.warning(f"⚠️ Не удалось удалить временный файл: {e}")
 
@@ -288,6 +293,11 @@ class VideoBot:
                 )
             except:
                 pass
+
+    def run(self):
+        """Запуск бота"""
+        logger.info("🚀 Бот запускается...")
+        self.application.run_polling()
 
 
 def signal_handler(signum, frame):
@@ -308,7 +318,7 @@ def main():
 
     try:
         bot = VideoBot()
-        bot.run()
+        bot.run()  # Теперь метод run() существует!
     except Exception as e:
         logger.error(f"❌ Критическая ошибка при запуске: {e}")
         sys.exit(1)
