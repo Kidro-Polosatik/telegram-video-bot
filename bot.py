@@ -5,7 +5,7 @@ import signal
 import sys
 import time
 import tempfile
-import shutil
+import requests
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 from moviepy.editor import VideoFileClip
@@ -68,7 +68,7 @@ class VideoBot:
             "**Как использовать:**\n"
             "1. Отправь видео файл\n"
             "2. Я обработаю его\n"
-            "3. Получишь кружочек!\n\n"
+            "3. Получишь кружочек видеосообщение!\n\n"
             "**Команды:**\n"
             "/start - начать работу\n"
             "/help - эта справка\n"
@@ -154,7 +154,7 @@ class VideoBot:
                 )
                 
                 # Ресайзим до оптимального размера для видеосообщения
-                target_size = 640  # Оптимальный размер для качественного видеосообщения
+                target_size = 320  # Идеальный размер для видеосообщений
                 
                 logger.info(f"📐 Масштабирую до: {target_size}x{target_size}")
                 resized_clip = cropped_clip.resize(newsize=(target_size, target_size))
@@ -165,7 +165,6 @@ class VideoBot:
                     output_path,
                     codec='libx264',
                     audio_codec='aac',
-                    bitrate="1000k",
                     verbose=False,
                     logger=None,
                     temp_audiofile='temp-audio.m4a',
@@ -184,7 +183,7 @@ class VideoBot:
             return False
     
     async def handle_video(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Обработка видео с проверкой форматов"""
+        """Обработка видео с отправкой видеосообщения"""
         user = update.message.from_user
         logger.info(f"📹 Получено видео от {user.first_name}")
         
@@ -258,21 +257,37 @@ class VideoBot:
             success = self.create_circle_video(input_path, output_path)
             
             if success:
-                await processing_msg.edit_text("✅ Отправляю результат...")
+                await processing_msg.edit_text("✅ Отправляю видеосообщение...")
                 
                 # Получаем размер обработанного файла
                 output_size = os.path.getsize(output_path) // (1024 * 1024)
                 logger.info(f"📦 Размер обработанного видео: {output_size} МБ")
                 
-                with open(output_path, 'rb') as result_file:
-                    await update.message.reply_video_note(
-                        video_note=result_file,
-                        length=640,  # Используем тот же размер, что и при обработке
-                        duration=min(video_duration, 20)
-                    )
+                # ⭐ ОТПРАВЛЯЕМ КАК ВИДЕОСООБЩЕНИЕ
+                try:
+                    with open(output_path, 'rb') as result_file:
+                        await update.message.reply_video_note(
+                            video_note=result_file,
+                            length=320,
+                            duration=min(video_duration, 20)
+                        )
+                    logger.info("✅ Видеосообщение отправлено")
+                    
+                except Exception as e:
+                    if "Voice_messages_forbidden" in str(e):
+                        logger.error("❌ Боту запрещено отправлять видеосообщения")
+                        await update.message.reply_text(
+                            "❌ Боту запрещено отправлять видеосообщения!\n\n"
+                            "💡 **Решение:**\n"
+                            "1. Напишите @BotFather\n"
+                            "2. Выберите вашего бота\n" 
+                            "3. Bot Settings → Group Privacy → Turn Off\n"
+                            "4. Перезапустите бота командой /start"
+                        )
+                    else:
+                        raise e
                 
                 await processing_msg.delete()
-                logger.info("✅ Видеосообщение отправлено")
                 
             else:
                 await processing_msg.edit_text(
@@ -313,6 +328,20 @@ class VideoBot:
             logger.info("⚠️ Конфликт getUpdates - другой инстанс бота активен")
             return
         
+        # Обрабатываем ошибку запрета видеосообщений
+        if "Voice_messages_forbidden" in str(error):
+            logger.error("❌ Боту запрещено отправлять видеосообщения")
+            if update and update.message:
+                await update.message.reply_text(
+                    "❌ Боту запрещено отправлять видеосообщения!\n\n"
+                    "💡 **Решение:**\n"
+                    "1. Напишите @BotFather\n"
+                    "2. Выберите вашего бота\n" 
+                    "3. Bot Settings → Group Privacy → Turn Off\n"
+                    "4. Перезапустите бота командой /start"
+                )
+            return
+        
         if update and update.message:
             try:
                 await update.message.reply_text("❌ Ошибка, попробуйте позже")
@@ -324,6 +353,11 @@ class VideoBot:
         logger.info("🚀 Запуск бота...")
         
         try:
+            # ⭐ СБРАСЫВАЕМ WEBHOOK ПЕРЕД ЗАПУСКОМ
+            webhook_url = f"https://api.telegram.org/bot{self.application.bot.token}/deleteWebhook"
+            response = requests.get(webhook_url)
+            logger.info(f"🔧 Webhook сброшен: {response.status_code}")
+            
             self.application.run_polling(
                 poll_interval=3,
                 timeout=20,
