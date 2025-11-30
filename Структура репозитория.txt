@@ -1,0 +1,8 @@
+telegram-video-bot
+├── .github
+│   └── workflows
+│       └── bot.yml
+├── bot.py
+├── requirements.txt
+├── .gitignore
+└── README.md
