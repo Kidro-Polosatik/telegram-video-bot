@@ -5,9 +5,17 @@ on:
     branches: [ main ]
   workflow_dispatch:
 
+# ⚠️ Предотвращаем множественные запуски
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   run-bot:
     runs-on: ubuntu-latest
+    
+    # ⏰ Таймаут меньше 6 часов для автоматического перезапуска
+    timeout-minutes: 350
     
     steps:
     - name: 📥 Checkout code
@@ -39,4 +47,5 @@ jobs:
         BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
       run: |
         echo "🤖 Запуск бота с токеном: ${BOT_TOKEN:0:10}..."
+        echo "⏰ Время запуска: $(date)"
         python bot.py
