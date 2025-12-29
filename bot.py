@@ -25,12 +25,14 @@ if not BOT_TOKEN:
 
 logger.info(f"✅ BOT_TOKEN загружен (первые символы: {BOT_TOKEN[:10]}...)")
 
+# Флаг для graceful shutdown
+shutdown_flag = False
+
 class VideoBot:
     def __init__(self):
         self.application = Application.builder().token(BOT_TOKEN).build()
         self.setup_handlers()
-        self.restart_count = 0
-        self.max_restarts = 3
+        self.should_stop = False
     
     def setup_handlers(self):
         """Настройка обработчиков"""
@@ -117,35 +119,18 @@ class VideoBot:
         try:
             logger.info(f"🎬 Начинаю обработку: {input_path} -> {output_path}")
             
-            # Проверяем что файл существует и не пустой
-            if not os.path.exists(input_path):
-                logger.error("❌ Входной файл не существует")
-                return False
-                
-            file_size = os.path.getsize(input_path)
-            if file_size == 0:
-                logger.error("❌ Входной файл пустой")
-                return False
-                
-            logger.info(f"📁 Размер входного файла: {file_size} байт")
-            
             with VideoFileClip(input_path) as clip:
                 logger.info(f"📹 Видео загружено: {clip.size[0]}x{clip.size[1]}, {clip.duration}сек")
                 
                 # Ограничение длительности
-                original_duration = clip.duration
-                if original_duration > 20:
+                if clip.duration > 20:
                     clip = clip.subclip(0, 20)
-                    logger.info(f"⏰ Видео обрезано с {original_duration:.1f}с до 20с")
                 
                 # Создание квадрата
                 width, height = clip.size
                 size = min(width, height)
                 x_center, y_center = width // 2, height // 2
                 
-                logger.info(f"🔲 Исходное разрешение: {width}x{height}, обрезается до: {size}x{size}")
-                
-                # Обрезаем до квадрата по центру
                 cropped_clip = clip.crop(
                     x1=x_center - size//2,
                     y1=y_center - size//2,
@@ -153,193 +138,87 @@ class VideoBot:
                     height=size
                 )
                 
-                # Ресайзим до оптимального размера для видеосообщения
-                target_size = 320  # Идеальный размер для видеосообщений
-                
-                logger.info(f"📐 Масштабирую до: {target_size}x{target_size}")
+                # Ресайзим до оптимального размера
+                target_size = 320
                 resized_clip = cropped_clip.resize(newsize=(target_size, target_size))
                 
-                # Сохраняем как квадратное видео
-                logger.info("💾 Сохраняю результат...")
+                # Сохраняем
                 resized_clip.write_videofile(
                     output_path,
                     codec='libx264',
                     audio_codec='aac',
                     verbose=False,
-                    logger=None,
-                    temp_audiofile='temp-audio.m4a',
-                    remove_temp=True
+                    logger=None
                 )
-                
-                # Закрываем клипы
-                cropped_clip.close()
-                resized_clip.close()
             
-            logger.info("✅ Видео успешно обработано")
             return True
             
         except Exception as e:
-            logger.error(f"❌ Ошибка обработки видео: {e}", exc_info=True)
+            logger.error(f"❌ Ошибка обработки видео: {e}")
             return False
     
     async def handle_video(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Обработка видео с отправкой видеосообщения"""
+        """Обработка видео"""
         user = update.message.from_user
         logger.info(f"📹 Получено видео от {user.first_name}")
-        
-        # Отладочная информация
-        logger.info(f"📊 Информация о видео:")
-        logger.info(f"   - Размер: {update.message.video.file_size} байт")
-        logger.info(f"   - Длительность: {update.message.video.duration} сек")
-        logger.info(f"   - MIME тип: {update.message.video.mime_type}")
         
         input_path = None
         output_path = None
         
         try:
-            # Проверяем размер файла
-            if update.message.video.file_size > 50 * 1024 * 1024:  # 50 МБ
-                await update.message.reply_text(
-                    "❌ Файл слишком большой! Максимум 50 МБ\n"
-                    "📏 Попробуйте:\n"
-                    "• Сжать видео\n" 
-                    "• Выбрать короче\n"
-                    "• Уменьшить качество"
-                )
+            if update.message.video.file_size > 50 * 1024 * 1024:
+                await update.message.reply_text("❌ Файл слишком большой! Максимум 50 МБ")
                 return
             
-            # Проверяем длительность
-            video_duration = update.message.video.duration
-            if video_duration > 60:  # 60 секунд
-                await update.message.reply_text(
-                    f"⚠️ Видео длинное: {video_duration} секунд\n"
-                    "⏰ Бот обрежет до 20 секунд"
-                )
+            processing_msg = await update.message.reply_text("🔄 Обрабатываю видео...")
             
-            processing_msg = await update.message.reply_text("🔄 Проверяю видео...")
-            
-            # Скачиваем видео
             video_file = await update.message.video.get_file()
-            file_extension = video_file.file_path.split('.')[-1].lower() if video_file.file_path else 'mp4'
             
-            logger.info(f"📥 Скачиваю видео: {file_extension}")
-            
-            await processing_msg.edit_text(
-                f"📹 **Информация о видео:**\n"
-                f"• Формат: {file_extension.upper()}\n"
-                f"• Длительность: {video_duration} сек\n"
-                f"• Размер: {update.message.video.file_size // (1024*1024)} МБ\n\n"
-                f"🔄 Начинаю обработку..."
-            )
-            
-            # Создаем временные файлы
-            with tempfile.NamedTemporaryFile(suffix=f'.{file_extension}', delete=False) as input_file:
+            with tempfile.NamedTemporaryFile(suffix='.mp4', delete=False) as input_file:
                 input_path = input_file.name
             
             with tempfile.NamedTemporaryFile(suffix='.mp4', delete=False) as output_file:
                 output_path = output_file.name
             
             await video_file.download_to_drive(input_path)
-            logger.info(f"✅ Видео скачано: {input_path}")
             
-            # Проверяем что файл скачался
-            file_size = os.path.getsize(input_path)
-            logger.info(f"📦 Размер скачанного файла: {file_size} байт")
-            
-            if file_size == 0:
-                await processing_msg.edit_text("❌ Ошибка: файл пустой")
-                return
-            
-            # Обработка
             await processing_msg.edit_text("🎬 Создаю кружочек...")
-            logger.info("🔄 Начинаю обработку видео...")
-            
             success = self.create_circle_video(input_path, output_path)
             
             if success:
                 await processing_msg.edit_text("✅ Отправляю видеосообщение...")
                 
-                # Получаем размер обработанного файла
-                output_size = os.path.getsize(output_path) // (1024 * 1024)
-                logger.info(f"📦 Размер обработанного видео: {output_size} МБ")
-                
-                # ⭐ ОТПРАВЛЯЕМ КАК ВИДЕОСООБЩЕНИЕ
-                try:
-                    with open(output_path, 'rb') as result_file:
-                        await update.message.reply_video_note(
-                            video_note=result_file,
-                            length=320,
-                            duration=min(video_duration, 20)
-                        )
-                    logger.info("✅ Видеосообщение отправлено")
-                    
-                except Exception as e:
-                    if "Voice_messages_forbidden" in str(e):
-                        logger.error("❌ Боту запрещено отправлять видеосообщения")
-                        await update.message.reply_text(
-                            "❌ Боту запрещено отправлять видеосообщения!\n\n"
-                            "💡 **Решение:**\n"
-                            "1. Напишите @BotFather\n"
-                            "2. Выберите вашего бота\n" 
-                            "3. Bot Settings → Group Privacy → Turn Off\n"
-                            "4. Перезапустите бота командой /start"
-                        )
-                    else:
-                        raise e
+                with open(output_path, 'rb') as result_file:
+                    await update.message.reply_video_note(
+                        video_note=result_file,
+                        length=320,
+                        duration=min(update.message.video.duration, 20)
+                    )
                 
                 await processing_msg.delete()
+                logger.info("✅ Видеосообщение отправлено")
                 
             else:
-                await processing_msg.edit_text(
-                    "❌ Не удалось обработать это видео\n\n"
-                    "💡 **Попробуйте:**\n"
-                    "• Конвертировать в MP4\n"
-                    "• Уменьшить размер\n"
-                    "• Сделать короче\n"
-                    "• Убрать сложные эффекты\n\n"
-                    "📋 Или используйте команду /formats для справки"
-                )
-                logger.error("❌ Ошибка обработки видео")
+                await processing_msg.edit_text("❌ Не удалось обработать видео")
         
         except Exception as e:
-            logger.error(f"❌ Ошибка в handle_video: {e}", exc_info=True)
-            if update.message:
-                await update.message.reply_text(
-                    f"❌ Ошибка обработки: {str(e)}\n\n"
-                    "📋 Попробуйте другое видео или используйте /help"
-                )
+            logger.error(f"❌ Ошибка: {e}")
+            await update.message.reply_text("❌ Ошибка, попробуйте позже")
         
         finally:
-            # Очистка временных файлов
             for path in [input_path, output_path]:
                 try:
                     if path and os.path.exists(path):
                         os.unlink(path)
-                        logger.info(f"✅ Временный файл удален: {path}")
-                except Exception as e:
-                    logger.warning(f"⚠️ Не удалось удалить временный файл: {e}")
+                except:
+                    pass
     
     async def error_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         error = context.error
         logger.error(f"❌ Ошибка бота: {error}")
         
-        # Игнорируем ошибки конфликта - они нормальны при перезапусках
         if "Conflict" in str(error):
             logger.info("⚠️ Конфликт getUpdates - другой инстанс бота активен")
-            return
-        
-        # Обрабатываем ошибку запрета видеосообщений
-        if "Voice_messages_forbidden" in str(error):
-            logger.error("❌ Боту запрещено отправлять видеосообщения")
-            if update and update.message:
-                await update.message.reply_text(
-                    "❌ Боту запрещено отправлять видеосообщения!\n\n"
-                    "💡 **Решение:**\n"
-                    "1. Напишите @BotFather\n"
-                    "2. Выберите вашего бота\n" 
-                    "3. Bot Settings → Group Privacy → Turn Off\n"
-                    "4. Перезапустите бота командой /start"
-                )
             return
         
         if update and update.message:
@@ -349,32 +228,54 @@ class VideoBot:
                 pass
 
     def run(self):
-        """Запуск бота с обработкой ошибок"""
+        """Запуск бота с таймером"""
         logger.info("🚀 Запуск бота...")
         
         try:
-            # ⭐ СБРАСЫВАЕМ WEBHOOK ПЕРЕД ЗАПУСКОМ
+            # Сбрасываем webhook
             webhook_url = f"https://api.telegram.org/bot{self.application.bot.token}/deleteWebhook"
             response = requests.get(webhook_url)
             logger.info(f"🔧 Webhook сброшен: {response.status_code}")
             
-            self.application.run_polling(
-                poll_interval=3,
-                timeout=20,
-                drop_pending_updates=True
-            )
+            # Запускаем polling в отдельном потоке
+            import threading
+            
+            def polling_thread():
+                self.application.run_polling(
+                    poll_interval=3,
+                    timeout=20,
+                    drop_pending_updates=True
+                )
+            
+            thread = threading.Thread(target=polling_thread)
+            thread.daemon = True
+            thread.start()
+            
+            # Ждем 5 часов 45 минут, затем останавливаемся
+            logger.info("⏰ Бот запущен. Автоматический перезапуск через 5 часов 45 минут...")
+            time.sleep(5 * 60 * 60 + 45 * 60)  # 5 часов 45 минут
+            
+            logger.info("🔄 Время перезапуска! Останавливаю бота...")
+            self.application.stop()
+            thread.join(timeout=10)
+            
+            logger.info("✅ Бот остановлен. GitHub Actions перезапустит workflow.")
+            
         except Exception as e:
             logger.error(f"❌ Критическая ошибка: {e}")
-            if self.restart_count < self.max_restarts:
-                self.restart_count += 1
-                logger.info(f"🔄 Перезапуск {self.restart_count}/{self.max_restarts}...")
-                time.sleep(5)
-                self.run()
-            else:
-                logger.error("❌ Достигнут лимит перезапусков")
-                sys.exit(1)
+            sys.exit(1)
+
+def signal_handler(signum, frame):
+    """Обработчик сигналов"""
+    global shutdown_flag
+    logger.info(f"📞 Получен сигнал {signum}")
+    shutdown_flag = True
 
 def main():
+    # Регистрируем обработчики сигналов
+    signal.signal(signal.SIGTERM, signal_handler)
+    signal.signal(signal.SIGINT, signal_handler)
+    
     logger.info("🚀 Telegram Video Circle Bot запускается...")
     
     try:
